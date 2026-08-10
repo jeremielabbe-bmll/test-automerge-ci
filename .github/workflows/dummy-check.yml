@@ -1,0 +1,12 @@
+name: Dummy Required Check
+
+# Required status check used by main's branch protection rule, so PRs can go
+# "out of date" (require-branches-up-to-date) instead of just being cleanly mergeable.
+on:
+  pull_request:
+
+jobs:
+  dummy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ok"
