@@ -39,6 +39,19 @@ jobs:
                 labels: ['autoupdate'],
               });
               core.info(`Added autoupdate label to #${pr.number}`);
+
+              // Otherwise a PR that's already behind main when auto-merge is
+              // enabled won't sync until the next push to main.
+              try {
+                await github.rest.pulls.updateBranch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                });
+                core.info(`Requested branch update for #${pr.number}`);
+              } catch (error) {
+                core.warning(`Failed to update branch for #${pr.number}: ${error.message}`);
+              }
             } else if (context.payload.action === 'auto_merge_disabled' && hasLabel) {
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
