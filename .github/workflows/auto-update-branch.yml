@@ -1,84 +1,51 @@
-name: Auto Update PR Branch (autoupdate label)
+name: Auto Update PR Branch (auto-merge enabled)
 
-# Mirrors bmlltech/jobserve's .github/workflows/auto-update-branch.yml, adapted for this
-# scratch repo: runs-on ubuntu-latest instead of the self-hosted bmll-always-on-small
-# runner, base branch is main instead of master, and workflow_dispatch is added so the
-# push-triggered job can be re-run manually for testing.
+# Mirrors bmlltech/jobserve PR #8881's version of .github/workflows/auto-update-branch.yml,
+# adapted for this scratch repo: runs-on ubuntu-latest instead of the self-hosted
+# bmll-always-on-small runner, base branch is main instead of master.
 on:
-  workflow_dispatch: # Allows manual testing from the Actions tab
   push:
     branches:
       - main
   pull_request:
     types:
       - auto_merge_enabled
-      - auto_merge_disabled
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write
+
+concurrency:
+  group: auto-update-prs
+  cancel-in-progress: true
 
 jobs:
-  sync-label:
-    if: github.event_name == 'pull_request'
+  update-branch:
     runs-on: ubuntu-latest
     steps:
-      - name: Add/remove autoupdate label to match auto-merge state
+      - name: Update branches for PRs with auto-merge enabled
         uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 #v9.0.0
         with:
           script: |
-            const pr = context.payload.pull_request;
-            const hasLabel = pr.labels.some((label) => label.name === 'autoupdate');
-
-            if (context.payload.action === 'auto_merge_enabled' && !hasLabel) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: ['autoupdate'],
-              });
-              core.info(`Added autoupdate label to #${pr.number}`);
-
-              // Otherwise a PR that's already behind main when auto-merge is
-              // enabled won't sync until the next push to main.
-              try {
-                await github.rest.pulls.updateBranch({
+            const targetPRs = context.eventName === 'pull_request'
+              ? [context.payload.pull_request.number]
+              : (await github.paginate(github.rest.pulls.list, {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  pull_number: pr.number,
-                });
-                core.info(`Requested branch update for #${pr.number}`);
-              } catch (error) {
-                core.warning(`Failed to update branch for #${pr.number}: ${error.message}`);
-              }
-            } else if (context.payload.action === 'auto_merge_disabled' && hasLabel) {
-              await github.rest.issues.removeLabel({
+                  base: 'main',
+                  state: 'open',
+                  per_page: 100,
+                })).map((pr) => pr.number);
+
+            for (const number of targetPRs) {
+              const { data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: pr.number,
-                name: 'autoupdate',
+                pull_number: number,
               });
-              core.info(`Removed autoupdate label from #${pr.number}`);
-            }
 
-  update-branch:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update branch for PRs labeled autoupdate
-        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 #v9.0.0
-        with:
-          script: |
-            const prs = await github.paginate(github.rest.pulls.list, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 100,
-            });
-
-            for (const pr of prs) {
-              if (!pr.labels.some((label) => label.name === 'autoupdate')) {
+              if (!pr.auto_merge) {
+                core.info(`Skipping #${number}: auto-merge not enabled`);
                 continue;
               }
 
@@ -86,10 +53,10 @@ jobs:
                 await github.rest.pulls.updateBranch({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  pull_number: pr.number,
+                  pull_number: number,
                 });
-                core.info(`Requested branch update for #${pr.number}`);
+                core.info(`Requested branch update for #${number}`);
               } catch (error) {
-                core.warning(`Failed to update branch for #${pr.number}: ${error.message}`);
+                core.warning(`Failed to update branch for #${number}: ${error.message}`);
               }
             }
